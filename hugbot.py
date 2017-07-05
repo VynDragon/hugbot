@@ -5,14 +5,15 @@ import argparse
 import traceback
 import subprocess
 import random
+import mimetypes
 import http.server
 import os.path
 import shutil
 import sys
-from io import StringIO
+import io
 
-
-client = discord.Client()
+loop = asyncio.get_event_loop()
+client = discord.Client(loop=loop)
 
 @client.event
 async def on_ready():
@@ -33,6 +34,7 @@ async def on_message(message):
 		for user in message.mentions:
 			await client.send_message(message.channel,  user.mention + " u received a hug from @" +   message.author.name)
 
+errorPath = "./data/error/"
 
 class RequestHandler(http.server.BaseHTTPRequestHandler):
 	def handleHeaders(self, response):
@@ -44,22 +46,43 @@ class RequestHandler(http.server.BaseHTTPRequestHandler):
 		with open(errorPath+str(error)+".html", 'rb') as  filee:
 					shutil.copyfileobj(filee, self.wfile)
 					self.wfile.flush()
+
+	def parseStream(self, stream):
+		return stream.read()
+
 	def do_GET(self):
 		try:
-			with open("./client"+self.path, 'rb') as  filee:
-				self.handleHeaders(200)
+			with io.open("./client"+self.path, 'rb') as  filee:
+				filetype, encoding = mimetypes.guess_type("./client"+self.path, strict=False)
+				self.send_response(200)
+				self.send_header("Content-Type", filetype)
 				self.end_headers()
 				shutil.copyfileobj(filee, self.wfile)
 				self.wfile.flush()
 		except FileNotFoundError:
 			self.handleError(404)
-	
+
+def recallHandle(server, loop, time):
+	server.handle_request()
+	loop.call_later(time, recallHandle, server, loop, time)
 
 parser = argparse.ArgumentParser(description='selfbot')
 parser.add_argument('token')
 parser.add_argument('serverip')
 args = parser.parse_args()
 random.seed()
-client.run(args.token)
+
 server = http.server.HTTPServer((args.serverip, 8001), RequestHandler)
-server.serve_forever()
+server.timeout = 0.5
+
+loop.call_later(0.5, recallHandle, server, loop, 0.5)
+
+try:
+	loop.run_until_complete(client.start(args.token))
+except KeyboardInterrupt:
+	server.shutdown()
+	loop.run_until_complete(client.logout())
+finally:
+	loop.close()
+
+
